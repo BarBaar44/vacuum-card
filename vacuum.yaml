@@ -1,0 +1,72 @@
+# Minimal: the default entities, buttons and actions.
+type: custom:vacuum-card
+
+---
+# Everything spelled out. Any entity can be replaced, or set to null to
+# switch that part off. Any button can be changed, or set to null.
+type: custom:vacuum-card
+name: Roborock
+maintenance_threshold: 10
+entities:
+  vacuum: vacuum.roborock_q_revo
+  status: sensor.roborock_q_revo_status
+  battery: sensor.roborock_q_revo_battery
+  charging: binary_sensor.roborock_q_revo_charging
+  cleaning: binary_sensor.roborock_q_revo_cleaning
+  progress: sensor.roborock_q_revo_cleaning_progress
+  current_room: sensor.roborock_q_revo_current_room
+  cleaning_area: sensor.roborock_q_revo_cleaning_area
+  cleaning_time: sensor.roborock_q_revo_cleaning_time
+  last_clean_begin: sensor.roborock_q_revo_last_clean_begin
+  last_clean_end: sensor.roborock_q_revo_last_clean_end
+  cleaning_mode: select.living_room_roborock_q_revo_cleaning_mode
+  next_clean: sensor.vacuum_next_scheduled_clean
+  schedule_disabled: input_boolean.disable_vacuum_cleaner_schedule
+  vacuum_error: sensor.roborock_q_revo_vacuum_error
+  dock_error: sensor.roborock_q_revo_dock_error
+  water_shortage: binary_sensor.roborock_q_revo_water_shortage
+  clean_water_box: binary_sensor.roborock_q_revo_dock_clean_water_box
+  dirty_water_box: binary_sensor.roborock_q_revo_dock_dirty_water_box
+  mop_attached: binary_sensor.roborock_q_revo_mop_attached
+  water_box_attached: binary_sensor.roborock_q_revo_water_box_attached
+  mop_drying: binary_sensor.roborock_q_revo_mop_drying
+  mop_drying_remaining: sensor.roborock_q_revo_mop_drying_remaining_time
+  main_brush_left: sensor.roborock_q_revo_main_brush_time_left
+  side_brush_left: sensor.roborock_q_revo_side_brush_time_left
+  filter_left: sensor.roborock_q_revo_filter_time_left
+  sensor_left: sensor.roborock_q_revo_sensor_time_left
+  dock_strainer_left: sensor.roborock_q_revo_dock_strainer_time_left
+controls:
+  start:
+    icon: mdi:play
+    label: Start
+    tap_action:
+      action: perform-action
+      perform_action: vacuum.start
+      target:
+        entity_id: vacuum.roborock_q_revo
+  pause:
+    tap_action:
+      action: perform-action
+      perform_action: vacuum.pause
+      target:
+        entity_id: vacuum.roborock_q_revo
+  return_to_base:
+    tap_action:
+      action: perform-action
+      perform_action: vacuum.return_to_base
+      target:
+        entity_id: vacuum.roborock_q_revo
+  locate:
+    tap_action:
+      action: perform-action
+      perform_action: vacuum.locate
+      target:
+        entity_id: vacuum.roborock_q_revo
+tap_action:
+  action: navigate
+  navigation_path: "#vacuum"
+hold_action:
+  action: more-info
+colors:
+  cleaning: var(--green-color)
