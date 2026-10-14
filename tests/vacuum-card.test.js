@@ -14,7 +14,6 @@ const R = "roborock_q_revo";
 const VAC = `vacuum.${R}`;
 const st = (state, attributes = {}, last_updated) =>
   ({ state: String(state), attributes, last_changed: "x", last_updated: last_updated || new Date().toISOString() });
-const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 
 /* A docked, charged robot with nothing to report; override what a test needs. */
 const base = (o = {}) => ({
@@ -27,11 +26,10 @@ const base = (o = {}) => ({
   [`sensor.${R}_current_room`]: st(o.room || "unknown"),
   [`sensor.${R}_cleaning_area`]: st(o.area ?? 42, { unit_of_measurement: "m²" }),
   [`sensor.${R}_cleaning_time`]: st(o.time ?? 38, o.timeUnit === null ? {} : { unit_of_measurement: o.timeUnit || "min" }),
-  [`sensor.${R}_last_clean_begin`]: st(hoursAgo(4)),
-  [`sensor.${R}_last_clean_end`]: st(o.last || hoursAgo(3)),
   [`select.living_room_${R}_cleaning_mode`]: st(o.mode || "vac_and_mop"),
-  "sensor.vacuum_next_scheduled_clean": st(o.next || "none", { next_time: o.nextAt }),
-  "input_boolean.disable_vacuum_cleaner_schedule": st(o.sched || "off"),
+  "switch.schedule_vacuum_clean": st(o.vacSched || "off", o.vacAt === undefined ? {} : { next_trigger: o.vacAt }),
+  "switch.schedule_vacuum_clean_with_mop": st(o.mopSched || "off", o.mopAt === undefined ? {} : { next_trigger: o.mopAt }),
+  "input_boolean.disable_vacuum_cleaner_schedule": st(o.paused || "off"),
   [`sensor.${R}_vacuum_error`]: st(o.verr || "none"),
   [`sensor.${R}_dock_error`]: st(o.derr || "ok"),
   [`binary_sensor.${R}_water_shortage`]: st(o.short || "off"),
@@ -166,30 +164,88 @@ assert.equal(r.status, "Offline");
 assert.equal(r.icon, "mdi:robot-vacuum-off");
 assert.deepEqual(r.controls, []);
 
-/* ---- docked info line -------------------------------------------------------- */
+/* ---- upcoming session --------------------------------------------------------- */
 
 const now = new Date();
 const at = (h, m, days = 0) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + days, h, m)).toISOString();
+const later = (min) => new Date(Date.now() + min * 60e3).toISOString();
+const soon = later(5); // safely in the future whatever the time of day
 
-r = v(base({ next: "vacuum+mop", nextAt: at(23, 59) }));
-assert.equal(r.info, "Next clean today 23:59");
+// earliest of two active schedules wins, with its own type
+r = v(base({ vacSched: "on", vacAt: at(9, 0, 3), mopSched: "on", mopAt: at(1, 0, 1) }));
+assert.equal(r.info, "Next: Vacuum & mop · tomorrow 01:00");
 assert.equal(r.mode, "mdi:water");
-r = v(base({ next: "vacuum", nextAt: at(2, 30, 1) }));
-assert.equal(r.info, "Next clean tomorrow 02:30");
+r = v(base({ vacSched: "on", vacAt: at(1, 0, 1), mopSched: "on", mopAt: at(9, 0, 3) }));
+assert.equal(r.info, "Next: Vacuum · tomorrow 01:00");
 assert.equal(r.mode, "mdi:robot-vacuum");
-r = v(base({ next: "vacuum", nextAt: at(9, 0, 3) }));
-assert.match(r.info, /^Next clean [A-Z][a-z]{2} 09:00$/, "further away: weekday");
 
-r = v(base({ next: "vacuum", nextAt: at(2, 30, 1), sched: "on" }));
-assert.equal(r.info, "Schedule off", "disabled schedule wins");
+// one schedule off: the earlier but switched-off one is skipped
+r = v(base({ vacSched: "off", vacAt: at(1, 0, 1), mopSched: "on", mopAt: at(9, 0, 3) }));
+assert.match(r.info, /^Next: Vacuum & mop · [A-Z][a-z]{2} 09:00$/, "further away: short weekday");
+
+// both off
+r = v(base({ vacSched: "off", vacAt: at(1, 0, 1), mopSched: "off", mopAt: at(2, 0, 1) }));
+assert.equal(r.info, "No session planned");
 assert.equal(r.mode, null);
 
-r = v(base({ next: "none" }));
-assert.equal(r.info, "Last clean 3 h ago · 42 m²");
-r = v(base({ next: "something_else", last: hoursAgo(30) }));
-assert.equal(r.info, "Last clean yesterday · 42 m²");
-r = v(base({ last: new Date(Date.now() - 20 * 60e3).toISOString() }));
-assert.equal(r.info, "Last clean 20 min ago · 42 m²");
+// paused wins over active schedules
+r = v(base({ vacSched: "on", vacAt: at(1, 0, 1), paused: "on" }));
+assert.equal(r.info, "Schedule paused");
+assert.equal(r.mode, null);
+
+// next_trigger missing, invalid or in the past
+r = v(base({ vacSched: "on", mopSched: "on" }));
+assert.equal(r.info, "No session planned", "missing next_trigger");
+r = v(base({ vacSched: "on", vacAt: "not a time", mopSched: "on", mopAt: later(-60) }));
+assert.equal(r.info, "No session planned", "invalid or past");
+r = v(base({ vacSched: "on", vacAt: later(-60), mopSched: "on", mopAt: at(1, 0, 1) }));
+assert.equal(r.info, "Next: Vacuum & mop · tomorrow 01:00", "past one skipped, future one shown");
+
+// today / tomorrow / weekday, in HA's time zone
+r = v(base({ vacSched: "on", vacAt: soon }));
+const todayExpected = new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(new Date(soon));
+const soonIsTomorrow = new Date(soon).getUTCDate() !== now.getUTCDate();
+assert.equal(r.info, `Next: Vacuum · ${soonIsTomorrow ? "tomorrow" : "today"} ${todayExpected}`);
+r = v(base({ vacSched: "on", vacAt: at(2, 30, 1) }));
+assert.equal(r.info, "Next: Vacuum · tomorrow 02:30");
+{
+  // Amsterdam: 23:30 UTC the day after tomorrow is already the next local day
+  const c = new Card();
+  w.document.body.appendChild(c);
+  cards.push(c);
+  c.setConfig({});
+  const h = hass(base({ vacSched: "on", vacAt: at(23, 30, 5) }));
+  h.config.time_zone = "Europe/Amsterdam";
+  c.hass = h;
+  assert.match(read(c).info, /^Next: Vacuum · [A-Z][a-z]{2} 0[01]:30$/, "time in HA's zone");
+}
+
+// shown while returning after a session, not during a mid-session trip to the dock
+r = v(base({ vac: "returning", status: "returning_home", vacSched: "on", vacAt: at(1, 0, 1) }));
+assert.equal(r.info, "Next: Vacuum · tomorrow 01:00");
+r = v(base({ vac: "returning", status: "going_to_wash_the_mop", cleaning: "on", room: "Hall", vacSched: "on", vacAt: at(1, 0, 1) }));
+assert.equal(r.info, "Hall · Vacuum & mop");
+// hidden while cleaning
+r = v(base({ vac: "cleaning", status: "cleaning", room: "Hall", vacSched: "on", vacAt: at(1, 0, 1) }));
+assert.equal(r.info, "Hall · Vacuum & mop");
+
+// custom schedule list and icon; no schedules: nothing
+r = v(base({ vacSched: "on", vacAt: at(1, 0, 1) }), { schedules: [{ entity: "switch.schedule_vacuum_clean", type: "mop", icon: "mdi:spray-bottle" }] });
+assert.equal(r.info, "Next: Vacuum & mop · tomorrow 01:00");
+assert.equal(r.mode, "mdi:spray-bottle");
+r = v(base(), { schedules: [] });
+assert.equal(r.info, "");
+
+// a schedule switch change re-renders
+{
+  const states = base({ vacSched: "off", vacAt: at(1, 0, 1) });
+  const c = render(states);
+  assert.equal(read(c).info, "No session planned");
+  c.hass = hass({ ...states, "switch.schedule_vacuum_clean": st("on", { next_trigger: at(1, 0, 1) }) });
+  assert.equal(read(c).info, "Next: Vacuum · tomorrow 01:00");
+  c.hass = hass({ ...states, "input_boolean.disable_vacuum_cleaner_schedule": st("on") });
+  assert.equal(read(c).info, "Schedule paused");
+}
 
 /* ---- attention badges, first match wins ---------------------------------------- */
 
@@ -243,6 +299,11 @@ const bad = [
   [{ controls: { start: "vacuum.start" } }, /must be a map/],
   [{ controls: [] }, /controls must be a map/],
   [{ maintenance_threshold: "soon" }, /maintenance_threshold/],
+  [{ schedules: "switch.x" }, /schedules must be a list/],
+  [{ schedules: [{ entity: "switch.x", type: "wash" }] }, /type must be one of: vacuum, mop/],
+  [{ schedules: [{ entity: "x", type: "mop" }] }, /not an entity id/],
+  [{ schedules: [{ entity: "switch.x", type: "mop", when: 1 }] }, /unknown option 'when'/],
+  [{ entities: { next_clean: "sensor.x" } }, /unknown role 'next_clean'/],
   [{ colors: "red" }, /colors must be a map/],
   [{ entitys: {} }, /Unknown option 'entitys'/],
 ];

@@ -20,8 +20,10 @@ HACS dashboard card (Lovelace) for a robot vacuum with a dock (the owner's Robor
 * Status: the status sensor decides words and group; an unknown value gets Title Case words and its group from the vacuum state. A vacuum state of `error` always wins; an unavailable vacuum is "Offline".
 * While `mop_drying` is on and the robot is docked or idle, the status reads "Drying the mop" in the dock colour (the status sensor says charged for hours).
 * Badge order is first-match-wins and documented in the README. The badge only shows when the progress bar does not (cleaning and paused show progress), so the card never grows. Tapping it opens more-info for its own sensor, not the card action.
+* Next session: read straight from the Scheduler-card switches in `schedules` (state `on`, attribute `next_trigger`), earliest valid future run wins. `schedule_paused` on shows "Schedule paused". Do not go back to `sensor.vacuum_next_scheduled_clean`: it says `none` when the run is more than 10 hours away.
+* mdi has no mop icon (checked against @mdi/js 7.4.47): mop sessions default to `mdi:water`, overridable per schedule with `icon`.
 * Controls per group are in `SHOW_CONTROLS`.
-* Re-render only when one of the card's own entities changes, plus a 30 s refresh (started in `connectedCallback`, stopped in `disconnectedCallback`) for relative times and the drying countdown. The DOM is built once per config and updated in place.
+* Re-render only when one of the card's own entities changes, plus a 30 s refresh (started in `connectedCallback`, stopped in `disconnectedCallback`) for today/tomorrow, sessions that pass and the drying countdown. The DOM is built once per config and updated in place.
 * Max height about 117px, so it fits 2 rows like its sisters. Measure in a real browser (Playwright) after layout changes.
 * Top-level names are shared with other cards when the file is loaded as a classic script: avoid short generic names.
 

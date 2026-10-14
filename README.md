@@ -6,11 +6,11 @@ One Lovelace card for a robot vacuum with a dock: what it is doing, where it is 
 
 * **Header:** icon, name, status in readable words, battery with a charging indicator. Colour by status group: cleaning, returning, dock work, paused, error, docked or idle.
 * **While cleaning:** the current room and cleaning mode (Vacuum, Vacuum & mop, Mop), a progress bar with percentage, area and minutes so far. The robot sways a little while it drives.
-* **While docked:** "Next clean today 21:30" with the mode icon, "Schedule off" when the schedule is paused, or else the last clean ("Last clean 3 h ago · 42 m²"). Times are in Home Assistant's time zone.
+* **Next session:** whenever the robot isn't cleaning, the earliest upcoming session from your schedule switches, with its type: "Next: Vacuum & mop · tomorrow 01:00". "Schedule paused" while the schedule is paused, "No session planned" when no schedule is active. Times are in Home Assistant's time zone.
 * **Mop drying:** a small countdown while the dock dries the mop.
 * **Attention:** one badge, most important first (see below), in the progress bar's place, so the card does not grow. Tap it for the sensor behind it.
 * **Controls:** Start, Pause, Return to dock and Locate, showing only the ones that make sense right now. Each is an ordinary Home Assistant action you can change or remove.
-* All animations stop when the system asks for reduced motion. Re-renders only when one of its own entities changes, plus a refresh every 30 s so "3 h ago" and the drying countdown stay current.
+* All animations stop when the system asks for reduced motion. Re-renders only when one of its own entities or schedule switches changes, plus a refresh every 30 s so "today" becomes "tomorrow" at midnight and the drying countdown stays current.
 
 ![Animation](https://raw.githubusercontent.com/BarBaar44/vacuum-card/main/animation.gif)
 
@@ -47,6 +47,7 @@ A full example with every option is in [vacuum.yaml](vacuum.yaml).
 | ----------------------- | ------------------------------------------------------------- |
 | `name`                  | `Vacuum`                                                      |
 | `entities`              | see below                                                     |
+| `schedules`             | the two schedule switches below. A list of `entity`, `type` (`vacuum` or `mop`) and optional `icon`; `[]` shows no session line |
 | `controls`              | all four buttons, see below. `false` hides them all           |
 | `maintenance_threshold` | `10` (hours left before a part gets a badge)                  |
 | `tap_action`            | `more-info` on the vacuum                                     |
@@ -65,16 +66,13 @@ A misspelled option, entity role or button shows an error card instead of being 
 | `status`               | `sensor.…_status`                                    | status words and group |
 | `battery`              | `sensor.…_battery`                                   | battery % |
 | `charging`             | `binary_sensor.…_charging`                           | charging indicator |
-| `cleaning`             | `binary_sensor.…_cleaning`                           | not shown; accepted so it can be set or switched off |
+| `cleaning`             | `binary_sensor.…_cleaning`                           | a session is under way (keeps room and mode during trips to the dock) |
 | `progress`             | `sensor.…_cleaning_progress`                         | progress % |
 | `current_room`         | `sensor.…_current_room`                              | room while cleaning |
-| `cleaning_area`        | `sensor.…_cleaning_area`                             | m², current or last run |
+| `cleaning_area`        | `sensor.…_cleaning_area`                             | m² so far |
 | `cleaning_time`        | `sensor.…_cleaning_time`                             | minutes so far (sensor unit wins) |
-| `last_clean_begin`     | `sensor.…_last_clean_begin`                          | last clean, if there is no end |
-| `last_clean_end`       | `sensor.…_last_clean_end`                            | last clean |
 | `cleaning_mode`        | `select.living_room_…_cleaning_mode`                 | Vacuum / Vacuum & mop / Mop |
-| `next_clean`           | `sensor.vacuum_next_scheduled_clean`                 | state `vacuum` or `vacuum+mop`, attribute `next_time`; anything else is no next clean |
-| `schedule_disabled`    | `input_boolean.disable_vacuum_cleaner_schedule`      | on: "Schedule off" |
+| `schedule_paused`      | `input_boolean.disable_vacuum_cleaner_schedule`      | on: "Schedule paused" instead of a session |
 | `vacuum_error`         | `sensor.…_vacuum_error`                              | badge; `none` is fine |
 | `dock_error`           | `sensor.…_dock_error`                                | badge; `ok` is fine |
 | `water_shortage`       | `binary_sensor.…_water_shortage`                     | badge |
@@ -89,6 +87,35 @@ A misspelled option, entity role or button shows an error card instead of being 
 | `filter_left`          | `sensor.…_filter_time_left`                          | maintenance badge |
 | `sensor_left`          | `sensor.…_sensor_time_left`                          | maintenance badge |
 | `dock_strainer_left`   | `sensor.…_dock_strainer_time_left`                   | maintenance badge |
+
+### Schedules
+
+The next session comes from [Scheduler card](https://github.com/nielsfaber/scheduler-card) schedule switches: each is `on` while its schedule is active and has a `next_trigger` attribute with the next run.
+
+| Default entity                           | `type`   | Shown as                     |
+| ---------------------------------------- | -------- | ---------------------------- |
+| `switch.schedule_vacuum_clean`           | `vacuum` | `mdi:robot-vacuum` Vacuum    |
+| `switch.schedule_vacuum_clean_with_mop`  | `mop`    | `mdi:water` Vacuum & mop     |
+
+The card shows, first match wins:
+
+| When                                                       | Shown                                        |
+| ---------------------------------------------------------- | -------------------------------------------- |
+| a session is under way (cleaning, paused, or `cleaning` on) | room and cleaning mode                      |
+| `schedule_paused` on                                       | Schedule paused                              |
+| a schedule is `on` with a valid future `next_trigger`      | the earliest one: "Next: Vacuum · today 14:00", "tomorrow 01:00" or "Sat 10:00" |
+| otherwise                                                  | No session planned                           |
+
+Material Design Icons has no mop icon, so mop sessions show a water drop. Give a schedule its own `icon` to change that:
+
+```yaml
+schedules:
+  - entity: switch.schedule_vacuum_clean
+    type: vacuum
+  - entity: switch.schedule_vacuum_clean_with_mop
+    type: mop
+    icon: mdi:spray-bottle
+```
 
 ### Status groups
 

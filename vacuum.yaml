@@ -17,11 +17,8 @@ entities:
   current_room: sensor.roborock_q_revo_current_room
   cleaning_area: sensor.roborock_q_revo_cleaning_area
   cleaning_time: sensor.roborock_q_revo_cleaning_time
-  last_clean_begin: sensor.roborock_q_revo_last_clean_begin
-  last_clean_end: sensor.roborock_q_revo_last_clean_end
   cleaning_mode: select.living_room_roborock_q_revo_cleaning_mode
-  next_clean: sensor.vacuum_next_scheduled_clean
-  schedule_disabled: input_boolean.disable_vacuum_cleaner_schedule
+  schedule_paused: input_boolean.disable_vacuum_cleaner_schedule
   vacuum_error: sensor.roborock_q_revo_vacuum_error
   dock_error: sensor.roborock_q_revo_dock_error
   water_shortage: binary_sensor.roborock_q_revo_water_shortage
@@ -36,6 +33,11 @@ entities:
   filter_left: sensor.roborock_q_revo_filter_time_left
   sensor_left: sensor.roborock_q_revo_sensor_time_left
   dock_strainer_left: sensor.roborock_q_revo_dock_strainer_time_left
+schedules:
+  - entity: switch.schedule_vacuum_clean
+    type: vacuum
+  - entity: switch.schedule_vacuum_clean_with_mop
+    type: mop
 controls:
   start:
     icon: mdi:play

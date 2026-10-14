@@ -19,7 +19,7 @@ const VERSION = "0.1.0";
 
 const HOLD_MS = 500;
 const MOVE_TOLERANCE_PX = 10;
-const TICK_MS = 30000; // refreshes "2 h ago", "today 14:00" and the drying countdown
+const TICK_MS = 30000; // refreshes "today 14:00" around midnight, past sessions and the drying countdown
 
 const ROBOT = "roborock_q_revo";
 const DEFAULTS = {
@@ -35,11 +35,8 @@ const DEFAULTS = {
     current_room: `sensor.${ROBOT}_current_room`,
     cleaning_area: `sensor.${ROBOT}_cleaning_area`,
     cleaning_time: `sensor.${ROBOT}_cleaning_time`,
-    last_clean_begin: `sensor.${ROBOT}_last_clean_begin`,
-    last_clean_end: `sensor.${ROBOT}_last_clean_end`,
     cleaning_mode: `select.living_room_${ROBOT}_cleaning_mode`,
-    next_clean: "sensor.vacuum_next_scheduled_clean",
-    schedule_disabled: "input_boolean.disable_vacuum_cleaner_schedule",
+    schedule_paused: "input_boolean.disable_vacuum_cleaner_schedule",
     vacuum_error: `sensor.${ROBOT}_vacuum_error`,
     dock_error: `sensor.${ROBOT}_dock_error`,
     water_shortage: `binary_sensor.${ROBOT}_water_shortage`,
@@ -55,6 +52,17 @@ const DEFAULTS = {
     sensor_left: `sensor.${ROBOT}_sensor_time_left`,
     dock_strainer_left: `sensor.${ROBOT}_dock_strainer_time_left`,
   },
+  // Scheduler-card schedule switches: on while active, attribute next_trigger = next run.
+  schedules: [
+    { entity: "switch.schedule_vacuum_clean", type: "vacuum" },
+    { entity: "switch.schedule_vacuum_clean_with_mop", type: "mop" },
+  ],
+};
+
+/* Session types for schedules. mdi has no mop icon, so mop sessions show a water drop. */
+const SESSION = {
+  vacuum: { label: "Vacuum", icon: "mdi:robot-vacuum" },
+  mop: { label: "Vacuum & mop", icon: "mdi:water" },
 };
 
 /* Maintenance roles, in badge order when several are equally low. */
@@ -207,7 +215,7 @@ ${Object.values(COLORS).map(([v, d]) => `    ${v}: ${d};`).join("\n")}
 
   .info { display: flex; align-items: center; gap: 6px; min-height: 16px; font-size: 12px; color: var(--secondary-text-color); }
   .info .text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .info .mode { --mdc-icon-size: 15px; display: none; flex: none; }
+  .info .mode { --mdc-icon-size: 15px; display: none; flex: none; order: -1; }
   .info .mode.show { display: flex; }
   .drying { display: none; flex: none; align-items: center; gap: 3px; color: var(--vc-dock); font-variant-numeric: tabular-nums; }
   .drying.show { display: flex; }
@@ -275,7 +283,7 @@ class VacuumCard extends HTMLElement {
 
   setConfig(config) {
     const c = config || {};
-    const known = ["type", "name", "entities", "controls", "maintenance_threshold", "tap_action", "hold_action",
+    const known = ["type", "name", "entities", "schedules", "controls", "maintenance_threshold", "tap_action", "hold_action",
       "colors", "grid_options", "layout_options", "view_layout", "visibility", "card_mod"];
     for (const k of Object.keys(c)) {
       if (!known.includes(k)) throw new Error(`Unknown option '${k}'. Known: ${known.slice(1, 9).join(", ")}`);
@@ -316,6 +324,20 @@ class VacuumCard extends HTMLElement {
       }
     }
 
+    const rawSched = c.schedules == null ? DEFAULTS.schedules : c.schedules;
+    if (!Array.isArray(rawSched)) throw new Error("schedules must be a list of { entity, type }");
+    const schedules = rawSched.map((sc, i) => {
+      if (!sc || typeof sc !== "object" || Array.isArray(sc)) throw new Error(`schedules[${i}] must be a map with entity and type`);
+      for (const k of Object.keys(sc)) {
+        if (!["entity", "type", "icon"].includes(k)) throw new Error(`schedules[${i}]: unknown option '${k}'. Known: entity, type, icon`);
+      }
+      if (typeof sc.entity !== "string" || !/^[a-z0-9_]+\.[a-z0-9_]+$/.test(sc.entity)) {
+        throw new Error(`schedules[${i}].entity: '${sc.entity}' is not an entity id`);
+      }
+      if (!SESSION[sc.type]) throw new Error(`schedules[${i}].type must be one of: ${Object.keys(SESSION).join(", ")}`);
+      return { entity: sc.entity, type: sc.type, icon: sc.icon || SESSION[sc.type].icon, label: SESSION[sc.type].label };
+    });
+
     const threshold = c.maintenance_threshold == null ? DEFAULTS.maintenance_threshold : num(c.maintenance_threshold);
     if (threshold === null || threshold < 0) throw new Error("maintenance_threshold must be a number of hours");
     if (c.colors != null && (typeof c.colors !== "object" || Array.isArray(c.colors))) {
@@ -325,6 +347,7 @@ class VacuumCard extends HTMLElement {
     this._config = {
       name: c.name || DEFAULTS.name,
       entities,
+      schedules,
       controls,
       threshold,
       tap_action: c.tap_action || { action: "more-info" },
@@ -332,7 +355,7 @@ class VacuumCard extends HTMLElement {
       colors: c.colors || {},
     };
     this._applyColors(this._config.colors);
-    this._ids = [...new Set(Object.values(entities).filter(Boolean))];
+    this._ids = [...new Set([...Object.values(entities), ...schedules.map((x) => x.entity)].filter(Boolean))];
     this._seen = Object.create(null);
     this._build();
     if (this._hass) this._update();
@@ -554,20 +577,18 @@ class VacuumCard extends HTMLElement {
     return `${this._fmt(ms, { weekday: "short" })} ${time}`;
   }
 
-  _ago(ms) {
-    const min = Math.max(0, Math.round((Date.now() - ms) / 60000));
-    if (min < 2) return "just now";
-    if (min < 60) return `${min} min ago`;
-    const h = Math.round(min / 60);
-    if (h < 24) return `${h} h ago`;
-    const d = Math.round(h / 24);
-    return d === 1 ? "yesterday" : `${d} days ago`;
-  }
-
-  _time(role) {
-    const v = this._val(role);
-    const t = v ? Date.parse(v) : NaN;
-    return isNaN(t) ? null : t;
+  /* The earliest future run among active schedules, or null. */
+  _nextSession() {
+    let best = null;
+    const now = Date.now();
+    for (const sc of this._config.schedules) {
+      const s = this._hass.states[sc.entity];
+      if (!s || s.state !== "on") continue;
+      const t = Date.parse(s.attributes && s.attributes.next_trigger);
+      if (isNaN(t) || t <= now) continue;
+      if (!best || t < best.at) best = { ...sc, at: t };
+    }
+    return best;
   }
 
   /* Seconds, from a sensor in s, min or h. The sensor's own unit wins over the default. */
@@ -674,32 +695,27 @@ class VacuumCard extends HTMLElement {
     // Info line
     let info = "";
     let modeIcon = null;
-    const active = g === "cleaning" || g === "paused" || g === "returning";
+    // A session is under way while cleaning or paused, and during trips to the dock mid-session.
+    const active = g === "cleaning" || g === "paused" || (g === "returning" && this._on("cleaning"));
     if (active) {
       const room = this._val("current_room");
       const mode = this._val("cleaning_mode");
       info = [room, mode ? MODES[key(mode)] || title(mode) : null].filter(Boolean).join(" · ");
-    } else if (g !== "offline") {
-      const next = this._s("next_clean");
-      const nextKind = next ? key(next.state) : "";
-      const nextAt = next && next.attributes ? Date.parse(next.attributes.next_time) : NaN;
-      if (this._on("schedule_disabled")) {
-        info = "Schedule off";
-      } else if ((nextKind === "vacuum" || nextKind === "vacuum+mop") && !isNaN(nextAt)) {
-        info = `Next clean ${this._when(nextAt)}`;
-        modeIcon = nextKind === "vacuum" ? "mdi:robot-vacuum" : "mdi:water";
+    } else if (this._on("schedule_paused")) {
+      info = "Schedule paused";
+    } else if (this._config.schedules.length) {
+      const next = this._nextSession();
+      if (next) {
+        info = `Next: ${next.label} · ${this._when(next.at)}`;
+        modeIcon = next.icon;
+        e.mode.title = next.label;
       } else {
-        const end = this._time("last_clean_end") || this._time("last_clean_begin");
-        const area = num(this._val("cleaning_area"));
-        if (end) info = [`Last clean ${this._ago(end)}`, area !== null ? `${Math.round(area)} m²` : null].filter(Boolean).join(" · ");
+        info = "No session planned";
       }
     }
     if (e.info.textContent !== info) e.info.textContent = info;
     e.mode.classList.toggle("show", !!modeIcon);
-    if (modeIcon) {
-      e.mode.setAttribute("icon", modeIcon);
-      e.mode.title = modeIcon === "mdi:water" ? "Vacuum and mop" : "Vacuum";
-    }
+    if (modeIcon && e.mode.getAttribute("icon") !== modeIcon) e.mode.setAttribute("icon", modeIcon);
 
     // Mop drying countdown
     const drySec = this._on("mop_drying") ? this._seconds("mop_drying_remaining", "s") : null;
