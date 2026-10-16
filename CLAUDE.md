@@ -7,7 +7,7 @@ HACS dashboard card (Lovelace) for a robot vacuum with a dock (the owner's Robor
 | File | Purpose |
 |---|---|
 | `vacuum-card.js` | The whole card: plain custom element, no build step, no dependencies. `DEFAULTS` holds the owner's entities, `STATUS` the status words and groups, `CONTROLS` the buttons, `COLORS` the colours. |
-| `tests/vacuum-card.test.js` | jsdom tests: every status group, every badge in order, docked info line, controls, actions, config errors. `npm test`. |
+| `tests/vacuum-card.test.js` | jsdom tests: every status group, every badge in order, docked info line, controls, actions, config errors, editor round trips. `npm test`. |
 | `hacs.json` | HACS manifest (HA 2024.11+). |
 | `README.md` | User docs, also the HACS info page. Keep the entity, status group, badge order, controls and colour tables in sync with the code. |
 | `CHANGELOG.md` | One `## vX.Y.Z` section per release; the Release workflow uses it as the release notes. |
@@ -24,6 +24,7 @@ HACS dashboard card (Lovelace) for a robot vacuum with a dock (the owner's Robor
 * Next session: read straight from the Scheduler-card switches in `schedules` (state `on`, attribute `next_trigger`), earliest valid future run wins. `schedule_paused` on shows "Schedule paused". Do not go back to `sensor.vacuum_next_scheduled_clean`: it says `none` when the run is more than 10 hours away.
 * mdi has no mop icon (checked against @mdi/js 7.4.47): mop sessions default to `mdi:water`, overridable per schedule with `icon`.
 * Controls per group are in `SHOW_CONTROLS`.
+* Visual editor (`VacuumCardEditor`, on `ha-form`): fields show the defaults; only non-defaults are written; a cleared entity is written as `null` (a cleared `vacuum` falls back to the default); schedules are slots `s0`, `s1`, ... with one empty slot after the used ones (at most 6), the default pair is not written and none at all is `[]`; buttons have show, icon and label, hidden is `null`, all hidden is `controls: false`, a button's own `tap_action` is kept; unknown keys are kept. Keep `VACUUM_ENTITY_GROUPS` in sync with `DEFAULTS.entities`.
 * Re-render only when one of the card's own entities changes, plus a 30 s refresh (started in `connectedCallback`, stopped in `disconnectedCallback`) for today/tomorrow, sessions that pass and the drying countdown. The DOM is built once per config and updated in place.
 * Max height about 117px, so it fits 2 rows like its sisters. Measure in a real browser (Playwright) after layout changes.
 * Top-level names are shared with other cards when the file is loaded as a classic script: avoid short generic names.
