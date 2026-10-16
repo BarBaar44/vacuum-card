@@ -618,6 +618,8 @@ class VacuumCard extends HTMLElement {
       group = "offline";
       words = "Offline";
     }
+    // Roborock keeps reporting "charging" on the dock at 100 %: that is charged.
+    if (key(raw) === "charging" && group === "docked" && num(this._val("battery")) >= 100) words = STATUS.charging_complete[1];
     // Drying runs for hours after a clean while the status says charged.
     if ((group === "docked" || group === "idle") && this._on("mop_drying")) {
       group = "dock";
@@ -660,7 +662,8 @@ class VacuumCard extends HTMLElement {
   _battery() {
     const b = num(this._val("battery"));
     if (b === null) return null;
-    const charging = this._on("charging") || key(this._val("status")) === "charging";
+    // The charging sensor stays on for as long as the robot is docked, also when full.
+    const charging = (this._on("charging") || key(this._val("status")) === "charging") && b < 100;
     const step = Math.min(100, Math.max(0, Math.round(b / 10) * 10));
     let icon;
     if (charging) icon = step >= 100 ? "mdi:battery-charging-100" : step <= 0 ? "mdi:battery-charging-outline" : `mdi:battery-charging-${step}`;

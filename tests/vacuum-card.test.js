@@ -147,6 +147,11 @@ assert(r.charging);
 assert.equal(r.batteryIcon, "mdi:battery-charging-90");
 assert.deepEqual(r.controls, ["start", "locate"]);
 
+r = v(base({ status: "charging", charging: "on", bat: 100 }));
+assert.equal(r.status, "Charged", "charging at 100 % reads Charged");
+assert(!r.charging, "no charging indicator when full");
+assert.equal(r.batteryIcon, "mdi:battery");
+
 r = v(base({ vac: "idle", status: "idle", bat: 15 }));
 assert.equal(r.status, "Idle");
 assert(r.low, "low battery when not charging");
