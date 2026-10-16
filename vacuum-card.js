@@ -15,7 +15,7 @@
  * https://github.com/BarBaar44/vacuum-card  (MIT)
  */
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 const HOLD_MS = 500;
 const MOVE_TOLERANCE_PX = 10;

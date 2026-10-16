@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.1
+
+### Fixed
+* **Charged, not charging:** Roborock keeps reporting "charging", and the charging sensor stays on, for as long as the robot is on the dock, also hours after the battery is full. Docked at 100% the card now says "Charged" and the battery shows no charging indicator.
+
 ## v0.1.0
 
 First release. One card for the robot vacuum and its dock, in the style of the Appliance, Room and Heating Control cards.
