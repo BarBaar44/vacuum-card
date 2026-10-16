@@ -132,6 +132,8 @@ The status sensor decides the group and the words; about 40 Roborock values have
 | idle      | `idle`      | Idle, Off the dock                                    | Start, Return, Locate |
 | offline   | `idle`      | Offline (vacuum unavailable)                          | none |
 
+Roborock keeps saying Charging on the dock once the battery is full; at 100% the card shows "Charged" and drops the charging indicator.
+
 While the mop dries the status sensor usually says Charged; the card shows "Drying the mop" in the dock colour instead.
 
 ### Badge order
