@@ -15,7 +15,7 @@
  * https://github.com/BarBaar44/vacuum-card  (MIT)
  */
 
-const VERSION = "0.1.1";
+const VERSION = "0.2.0";
 
 const HOLD_MS = 500;
 const MOVE_TOLERANCE_PX = 10;
@@ -275,6 +275,10 @@ class VacuumCard extends HTMLElement {
     this._seen = Object.create(null);
     this._ids = [];
     this._tick = null;
+  }
+
+  static getConfigElement() {
+    return document.createElement("vacuum-card-editor");
   }
 
   static getStubConfig() {
@@ -774,8 +778,314 @@ class VacuumCard extends HTMLElement {
   }
 }
 
+/* ------------------------------------------------------------------------ */
+/* Visual editor                                                            */
+/* ------------------------------------------------------------------------ */
+
+/*
+ * Built on HA's own <ha-form>. Every field shows the value in use, defaults
+ * included; only values that differ from the defaults are written to the
+ * YAML. Clearing an entity switches that part off (null); the vacuum itself
+ * is required, so clearing it goes back to the default. Schedules are edited
+ * as slots (one empty slot to add another), buttons can be shown or hidden
+ * and get their own icon and label; a button's own tap_action is kept.
+ * Options the editor does not show (grid_options, ...) are kept.
+ */
+
+const VACUUM_ENTITY_GROUPS = [
+  ["Robot", "mdi:robot-vacuum", true, [
+    ["vacuum", "Vacuum (required)", ["vacuum"]],
+    ["status", "Status", ["sensor"]],
+    ["battery", "Battery", ["sensor"]],
+    ["charging", "Charging", ["binary_sensor"]],
+    ["cleaning", "Session under way", ["binary_sensor"]],
+    ["progress", "Cleaning progress", ["sensor"]],
+    ["current_room", "Current room", ["sensor"]],
+    ["cleaning_area", "Cleaning area", ["sensor"]],
+    ["cleaning_time", "Cleaning time", ["sensor"]],
+    ["cleaning_mode", "Cleaning mode", ["select", "sensor"]],
+    ["schedule_paused", "Schedule paused", ["input_boolean", "binary_sensor", "switch"]],
+    ["mop_drying", "Mop drying", ["binary_sensor"]],
+    ["mop_drying_remaining", "Mop drying time left", ["sensor"]],
+  ]],
+  ["Attention", "mdi:alert-circle-outline", false, [
+    ["vacuum_error", "Vacuum error", ["sensor"]],
+    ["dock_error", "Dock error", ["sensor"]],
+    ["water_shortage", "Water shortage", ["binary_sensor"]],
+    ["clean_water_box", "Refill clean water tank", ["binary_sensor"]],
+    ["dirty_water_box", "Empty dirty water tank", ["binary_sensor"]],
+    ["mop_attached", "Mop attached", ["binary_sensor"]],
+    ["water_box_attached", "Water box attached", ["binary_sensor"]],
+  ]],
+  ["Maintenance", "mdi:wrench-clock", false, [
+    ["main_brush_left", "Main brush time left", ["sensor"]],
+    ["side_brush_left", "Side brush time left", ["sensor"]],
+    ["filter_left", "Filter time left", ["sensor"]],
+    ["sensor_left", "Sensors time left", ["sensor"]],
+    ["dock_strainer_left", "Dock strainer time left", ["sensor"]],
+  ]],
+];
+const VACUUM_ENTITY_FIELDS = VACUUM_ENTITY_GROUPS.flatMap((g) => g[3]);
+const VACUUM_REQUIRED = ["vacuum"];
+const VACUUM_MAX_SCHEDULES = 6;
+
+const vacuumEditorSchema = (slots) => [
+  {
+    type: "grid",
+    name: "",
+    schema: [
+      { name: "name", selector: { text: {} } },
+      { name: "maintenance_threshold", selector: { number: { min: 0, max: 500, step: 1, mode: "box", unit_of_measurement: "h" } } },
+    ],
+  },
+  ...VACUUM_ENTITY_GROUPS.map(([title, icon, expanded, fields]) => ({
+    type: "expandable",
+    name: "entities",
+    title: `Entities: ${title.toLowerCase()}`,
+    icon,
+    expanded,
+    schema: fields.map(([role, , domains]) => ({
+      name: role,
+      selector: { entity: { filter: { domain: domains } } },
+    })),
+  })),
+  {
+    type: "expandable",
+    name: "schedules",
+    title: "Schedules",
+    icon: "mdi:calendar-clock",
+    schema: Array.from({ length: slots }, (_, i) => ({
+      type: "grid",
+      name: `s${i}`,
+      schema: [
+        { name: "entity", selector: { entity: { filter: { domain: ["switch"] } } } },
+        {
+          name: "type",
+          selector: { select: { mode: "dropdown", options: Object.entries(SESSION).map(([value, s]) => ({ value, label: s.label })) } },
+        },
+        { name: "icon", selector: { icon: {} } },
+      ],
+    })),
+  },
+  {
+    type: "expandable",
+    name: "controls",
+    title: "Buttons",
+    icon: "mdi:gesture-tap-button",
+    schema: Object.keys(CONTROLS).map((k) => ({
+      type: "grid",
+      name: k,
+      schema: [
+        { name: "show", selector: { boolean: {} } },
+        { name: "icon", selector: { icon: {} } },
+        { name: "label", selector: { text: {} } },
+      ],
+    })),
+  },
+  {
+    type: "expandable",
+    name: "",
+    title: "Actions",
+    icon: "mdi:gesture-tap",
+    schema: [
+      { name: "tap_action", selector: { ui_action: { default_action: "more-info" } } },
+      { name: "hold_action", selector: { ui_action: { default_action: "more-info" } } },
+    ],
+  },
+  {
+    type: "expandable",
+    name: "colors",
+    title: "Colours",
+    icon: "mdi:palette",
+    schema: [{
+      type: "grid",
+      name: "",
+      schema: Object.keys(COLORS).map((k) => ({ name: k, selector: { text: {} } })),
+    }],
+  },
+];
+
+const VACUUM_EDITOR_LABELS = {
+  name: "Name",
+  maintenance_threshold: "Maintenance badge below",
+  entity: "Schedule switch",
+  type: "Session type",
+  icon: "Icon",
+  show: "Show",
+  label: "Label",
+  tap_action: "Tap action",
+  hold_action: "Hold action",
+  dock: "dock work",
+  idle: "idle, docked, offline",
+  battery_low: "battery low",
+  ...Object.fromEntries(VACUUM_ENTITY_FIELDS.map(([k, label]) => [k, label])),
+  ...Object.fromEntries(Object.entries(CONTROLS).map(([k, c]) => [k, `Button: ${c.label}`])),
+};
+
+class VacuumCardEditor extends HTMLElement {
+  /* config -> form data: defaults filled in, null shown as empty. */
+  static toData(config) {
+    const ent = config.entities || {};
+    const entities = {};
+    for (const role of Object.keys(DEFAULTS.entities)) {
+      const v = role in ent ? ent[role] : DEFAULTS.entities[role];
+      entities[role] = v || "";
+    }
+    const list = Array.isArray(config.schedules) ? config.schedules : DEFAULTS.schedules;
+    const schedules = {};
+    list.forEach((sc, i) => {
+      schedules[`s${i}`] = { entity: (sc && sc.entity) || "", type: (sc && sc.type) || "vacuum", icon: (sc && sc.icon) || "" };
+    });
+    const raw = config.controls;
+    const controls = {};
+    for (const [k, d] of Object.entries(CONTROLS)) {
+      const o = raw === false || raw === null ? null : raw == null ? {} : raw[k];
+      const shown = o !== null && o !== false;
+      controls[k] = { show: shown, icon: (shown && o && o.icon) || d.icon, label: (shown && o && o.label) || d.label };
+    }
+    const threshold = num(config.maintenance_threshold);
+    return {
+      name: config.name == null ? DEFAULTS.name : config.name,
+      maintenance_threshold: threshold == null ? DEFAULTS.maintenance_threshold : threshold,
+      entities,
+      schedules,
+      controls,
+      tap_action: config.tap_action,
+      hold_action: config.hold_action,
+      colors: { ...(config.colors || {}) },
+    };
+  }
+
+  /* form data -> config: only what differs from the defaults; cleared entity -> null. */
+  static toConfig(data, previous) {
+    const prev = previous || {};
+    const config = { type: "custom:vacuum-card" };
+    const handled = ["type", "name", "entities", "schedules", "controls", "maintenance_threshold",
+      "tap_action", "hold_action", "colors"];
+    for (const [k, v] of Object.entries(prev)) {
+      if (!handled.includes(k)) config[k] = v;
+    }
+    if (data.name != null && data.name !== DEFAULTS.name) config.name = data.name;
+    const threshold = num(data.maintenance_threshold);
+    if (threshold != null && threshold >= 0 && threshold !== DEFAULTS.maintenance_threshold) {
+      config.maintenance_threshold = threshold;
+    }
+
+    const entities = {};
+    for (const [role, def] of Object.entries(DEFAULTS.entities)) {
+      const v = (data.entities || {})[role];
+      if (!v) {
+        if (!VACUUM_REQUIRED.includes(role)) entities[role] = null;
+      } else if (v !== def) entities[role] = v;
+    }
+    if (Object.keys(entities).length) config.entities = entities;
+
+    // Schedules: filled slots in order; the default pair is not written.
+    const slots = data.schedules || {};
+    const schedules = Object.keys(slots)
+      .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+      .map((k) => slots[k] || {})
+      .filter((sc) => typeof sc.entity === "string" && sc.entity)
+      .map((sc) => {
+        const type = SESSION[sc.type] ? sc.type : "vacuum";
+        const out = { entity: sc.entity, type };
+        if (sc.icon && sc.icon !== SESSION[type].icon) out.icon = sc.icon;
+        return out;
+      });
+    const isDefault = schedules.length === DEFAULTS.schedules.length && schedules.every((sc, i) =>
+      sc.entity === DEFAULTS.schedules[i].entity && sc.type === DEFAULTS.schedules[i].type && !sc.icon);
+    if (!isDefault) config.schedules = schedules;
+
+    // Buttons: hidden -> null, all hidden -> false; a button's own tap_action is kept.
+    const prevControls = prev.controls && typeof prev.controls === "object" ? prev.controls : {};
+    const controls = {};
+    let shown = 0;
+    for (const [k, d] of Object.entries(CONTROLS)) {
+      const b = (data.controls || {})[k] || {};
+      if (b.show === false) {
+        controls[k] = null;
+        continue;
+      }
+      shown++;
+      const out = {};
+      if (b.icon && b.icon !== d.icon) out.icon = b.icon;
+      if (b.label && b.label !== d.label) out.label = b.label;
+      const p = prevControls[k];
+      if (p && typeof p === "object" && p.tap_action) out.tap_action = p.tap_action;
+      if (Object.keys(out).length) controls[k] = out;
+    }
+    if (!shown) config.controls = false;
+    else if (Object.keys(controls).length) config.controls = controls;
+
+    if (data.tap_action && Object.keys(data.tap_action).length) config.tap_action = data.tap_action;
+    if (data.hold_action && Object.keys(data.hold_action).length) config.hold_action = data.hold_action;
+    const colors = {};
+    for (const [k, v] of Object.entries(data.colors || {})) {
+      if (typeof v === "string" && v.trim()) colors[k] = v.trim();
+    }
+    if (Object.keys(colors).length) config.colors = colors;
+    return config;
+  }
+
+  setConfig(config) {
+    this._config = config;
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) this._form.hass = hass;
+  }
+
+  connectedCallback() {
+    this._loadForm().then(() => this._render());
+  }
+
+  /* ha-form is lazy loaded by HA; load it through a built-in card's editor. */
+  async _loadForm() {
+    if (customElements.get("ha-form")) return;
+    try {
+      const helpers = await window.loadCardHelpers();
+      const card = await helpers.createCardElement({ type: "entities", entities: [] });
+      if (card.constructor.getConfigElement) await card.constructor.getConfigElement();
+    } catch (_) {
+      /* rendered as soon as HA has loaded it */
+    }
+    await customElements.whenDefined("ha-form");
+  }
+
+  _render() {
+    if (!this._config || !customElements.get("ha-form")) return;
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.computeLabel = (s) => VACUUM_EDITOR_LABELS[s.name] || s.name.replace(/_/g, " ");
+      this._form.addEventListener("value-changed", (e) => {
+        e.stopPropagation();
+        const config = VacuumCardEditor.toConfig(e.detail.value, this._config);
+        this._config = config;
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+      });
+      this.appendChild(this._form);
+    }
+    const data = VacuumCardEditor.toData(this._config);
+    // One empty slot after the schedules in use, to add another.
+    const used = Object.keys(data.schedules).length;
+    const slots = Math.min(VACUUM_MAX_SCHEDULES, Math.max(used + 1, 1));
+    for (let i = used; i < slots; i++) data.schedules[`s${i}`] = { entity: "", type: "vacuum", icon: "" };
+    if (this._slots !== slots) {
+      this._slots = slots;
+      this._form.schema = vacuumEditorSchema(slots);
+    }
+    this._form.hass = this._hass;
+    this._form.data = data;
+  }
+}
+
 if (!customElements.get("vacuum-card")) {
   customElements.define("vacuum-card", VacuumCard);
+}
+if (!customElements.get("vacuum-card-editor")) {
+  customElements.define("vacuum-card-editor", VacuumCardEditor);
 }
 
 window.customCards = window.customCards || [];

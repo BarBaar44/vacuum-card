@@ -41,6 +41,8 @@ tap_action:
 
 A full example with every option is in [vacuum.yaml](vacuum.yaml).
 
+Or use the card editor: it shows every entity in use, your defaults included (in three groups: robot, attention and maintenance), the schedules (with an empty slot to add one), each button with its icon and label (switch it off to hide it), the maintenance threshold, tap and hold actions and colours. Clearing an entity switches that part off; the vacuum itself is required, so clearing it goes back to the default. Only values that differ from the defaults are written to the YAML. A button's own `tap_action` and options the editor does not show, such as `grid_options`, are kept.
+
 ### Options
 
 | Option                  | Default                                                       |

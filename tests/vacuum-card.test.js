@@ -370,7 +370,102 @@ assert.deepEqual(Card.getStubConfig(), {});
     assert.deepEqual(got2[1].config.hold_action, { action: "more-info" });
     assert.equal(got2[1].config.entity, VAC);
     cards.forEach((x) => x.remove()); // stops the refresh timers
-    console.log("ALL OK");
-    process.exit(0);
+    editorTests().then(() => {
+      console.log("ALL OK");
+      process.exit(0);
+    }).catch((err) => { console.error(err); process.exit(1); });
   }, 600);
+}
+
+async function editorTests() {
+  const Editor = w.customElements.get("vacuum-card-editor");
+  assert(Editor, "editor registered");
+  assert.equal(Card.getConfigElement().tagName.toLowerCase(), "vacuum-card-editor");
+
+  // the minimal config shows every default and writes nothing new
+  const minimal = { type: "custom:vacuum-card", grid_options: { columns: 12, rows: 2 } };
+  const d0 = Editor.toData(minimal);
+  assert.equal(d0.name, "Vacuum");
+  assert.equal(d0.maintenance_threshold, 10);
+  assert.equal(d0.entities.vacuum, VAC);
+  assert.equal(d0.entities.filter_left, `sensor.${R}_filter_time_left`);
+  assert.deepEqual(d0.schedules.s1, { entity: "switch.schedule_vacuum_clean_with_mop", type: "mop", icon: "" });
+  assert.deepEqual(d0.controls.locate, { show: true, icon: "mdi:map-marker-radius", label: "Locate" });
+  assert.deepEqual(Editor.toConfig(d0, minimal), minimal);
+
+  // entities: changed, cleared to null; the required vacuum falls back to its default
+  const d1 = Editor.toData(minimal);
+  d1.entities.water_box_attached = "";
+  d1.entities.vacuum = "";
+  d1.entities.status = "sensor.other_status";
+  const c1 = Editor.toConfig(d1, minimal);
+  assert.deepEqual(c1.entities, { status: "sensor.other_status", water_box_attached: null });
+  assert.deepEqual(Editor.toConfig(Editor.toData(c1), c1), c1, "round trip");
+
+  // schedules: an added slot, a removed one, a custom icon; all removed -> []
+  const d2 = Editor.toData(minimal);
+  d2.schedules.s0.entity = "";
+  d2.schedules.s2 = { entity: "switch.schedule_kitchen", type: "mop", icon: "mdi:water-outline" };
+  const c2 = Editor.toConfig(d2, minimal);
+  assert.deepEqual(c2.schedules, [
+    { entity: "switch.schedule_vacuum_clean_with_mop", type: "mop" },
+    { entity: "switch.schedule_kitchen", type: "mop", icon: "mdi:water-outline" },
+  ]);
+  assert.deepEqual(Editor.toConfig(Editor.toData(c2), c2), c2, "round trip");
+  const d3 = Editor.toData(minimal);
+  d3.schedules.s0.entity = "";
+  d3.schedules.s1.entity = "";
+  assert.deepEqual(Editor.toConfig(d3, minimal).schedules, []);
+  assert.deepEqual(Editor.toData({ schedules: [] }).schedules, {});
+
+  // buttons: hidden -> null, relabelled, own tap_action kept; all hidden -> false
+  const prev = { type: "custom:vacuum-card", controls: { start: { tap_action: { action: "perform-action", perform_action: "script.clean" } } } };
+  const d4 = Editor.toData(prev);
+  d4.controls.locate.show = false;
+  d4.controls.pause.label = "Hold on";
+  const c4 = Editor.toConfig(d4, prev);
+  assert.deepEqual(c4.controls, {
+    start: { tap_action: { action: "perform-action", perform_action: "script.clean" } },
+    pause: { label: "Hold on" },
+    locate: null,
+  });
+  assert.equal(Editor.toData(c4).controls.locate.show, false);
+  assert.deepEqual(Editor.toConfig(Editor.toData(c4), c4), c4, "round trip");
+  const d5 = Editor.toData(minimal);
+  Object.values(d5.controls).forEach((b) => { b.show = false; });
+  const c5 = Editor.toConfig(d5, minimal);
+  assert.equal(c5.controls, false);
+  assert.equal(Editor.toData(c5).controls.start.show, false);
+  assert.deepEqual(Editor.toConfig(Editor.toData(c5), c5), c5, "round trip");
+
+  // name, threshold, actions, colours
+  const full = {
+    type: "custom:vacuum-card", name: "Roborock", maintenance_threshold: 24,
+    tap_action: { action: "navigate", navigation_path: "#vacuum" }, colors: { cleaning: "teal" },
+  };
+  assert.deepEqual(Editor.toConfig(Editor.toData(full), full), full);
+  const d6 = Editor.toData(full);
+  d6.colors.cleaning = " ";
+  assert.equal(Editor.toConfig(d6, full).colors, undefined, "empty colour dropped");
+
+  // every config the editor writes is accepted by the card
+  for (const c of [c1, c2, c4, c5, Editor.toConfig(Editor.toData(full), full)]) new Card().setConfig(c);
+
+  // with a stub ha-form: renders, one empty schedule slot, passes changes on
+  w.customElements.define("ha-form", class extends w.HTMLElement {});
+  const ed = new Editor();
+  const got = [];
+  ed.addEventListener("config-changed", (e) => got.push(e.detail.config));
+  ed.setConfig(minimal);
+  w.document.body.appendChild(ed);
+  await new Promise((r) => setTimeout(r, 0));
+  const form = ed.querySelector("ha-form");
+  assert(form, "ha-form rendered");
+  assert.deepEqual(form.data.schedules.s2, { entity: "", type: "vacuum", icon: "" }, "empty slot to add one");
+  const sched = form.schema.find((x) => x.name === "schedules");
+  assert.equal(sched.schema.length, 3);
+  assert.equal(form.computeLabel({ name: "dock_strainer_left" }), "Dock strainer time left");
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, name: "Robbie" } } }));
+  assert.deepEqual(got[0], { ...minimal, name: "Robbie" }, "the empty slot is not written");
+  ed.remove();
 }

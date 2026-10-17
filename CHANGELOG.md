@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.0
+
+### Added
+* **Visual editor:** name, maintenance threshold, every entity (in three groups: robot, attention, maintenance), the schedules (with an empty slot to add one), each button (show or hide, icon, label), tap and hold actions and colours. Every field shows the value in use, defaults included. Clearing an entity switches that part off; clearing the vacuum goes back to its default. Hiding every button writes `controls: false`. Only values that differ from the defaults are written to the YAML; a button's own `tap_action` and options the editor does not show are kept.
+
 ## v0.1.1
 
 ### Fixed
